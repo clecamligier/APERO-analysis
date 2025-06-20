@@ -1,0 +1,306 @@
+---
+title: "Data preprocessing.Rmd"
+author: "Capucine LE CAM LIGIER"
+date: "2024-04-01"
+format: 
+  html:
+    code-fold: true
+---
+
+# I. Load Required Packages
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, error=FALSE, echo=FALSE)
+```
+
+```{r }
+packages <- c("dada2", "phyloseq", "readr", "Biostrings", "DECIPHER", "ape", "ShortRead", "tidyverse", "vegan", "microbiome", "BiocManager", "ggplot2", "dplyr", "tidyr", "knitr", "rmarkdown")
+lapply(packages, library, character.only = TRUE)
+```
+
+# II. Working Directory and Reference Databases
+
+Define the folder where reference databases (SILVA) are stored:
+
+```{r}
+refdb_folder <- here::here("data", "refdb")
+if (!dir.exists(refdb_folder)) dir.create(refdb_folder, recursive = TRUE)
+```
+
+Download SILVA reference databases if not already available:
+
+```{r}
+options(timeout = 1200)
+
+silva_train_set <- file.path(refdb_folder, "silva_nr99_v138.1_train_set.fa.gz")
+silva_species_assignment <- file.path(refdb_folder, "silva_species_assignment_v138.1.fa.gz")
+
+if (!file.exists(silva_train_set)) {
+  download.file("https://zenodo.org/record/4587955/files/silva_nr99_v138.1_train_set.fa.gz", silva_train_set, quiet = TRUE)
+}
+
+if (!file.exists(silva_species_assignment)) {
+  download.file("https://zenodo.org/record/4587955/files/silva_species_assignment_v138.1.fa.gz", silva_species_assignment, quiet = TRUE)
+}
+```
+
+# III. Input Files
+
+```{r}
+devtools::load_all()
+```
+
+Define paths to raw sequencing data:
+
+```{r}
+path_to_fastqs <- here::here("data", "raw")
+```
+
+List forward and reverse read files:
+
+```{r}
+fnFs <- sort(list.files(path_to_fastqs, pattern = "_1.fastq.gz", full.names = TRUE))
+fnRs <- sort(list.files(path_to_fastqs, pattern = "_2.fastq.gz", full.names = TRUE))
+```
+
+Extract sample names from file names:
+
+```{r}
+sample_names <- basename(fnFs) |> strsplit(split = "_") |> sapply(head, 1)
+```
+
+# IV. Quality Control
+
+Generate quality profile plots:
+
+```{r}
+quality_folder <- here::here("outputs", "dada2", "quality_plots")
+if (!dir.exists(quality_folder)) dir.create(quality_folder, recursive = TRUE)
+
+qualityprofile(fnFs, fnRs, file.path(quality_folder, "quality_plots.pdf"))
+```
+
+# V. Primer Removal
+
+Create output directory and define primer sequences (V3--V4 region):
+
+```{r}
+path_to_trimmed_reads <- here::here("outputs", "dada2", "trimmed")
+if (!dir.exists(path_to_trimmed_reads)) dir.create(path_to_trimmed_reads, recursive = TRUE)
+
+primer_fwd  <- "CCTACGGGNGGCWGCAG"
+primer_rev  <- "GACTACHVGGGTATCTAATCC"
+```
+
+Trim primers using cutadapt:
+
+```{r}
+(primer_log <- primer_trim(
+  forward_files = fnFs,
+  reverse_files = fnRs,
+  primer_fwd = primer_fwd,
+  primer_rev = primer_rev,
+  output_dir = path_to_trimmed_reads,
+  min_size = 200
+))
+```
+
+# VI. Filtering and Trimming
+
+Define output paths and filenames:
+
+```{r}
+path_to_filtered_reads <- here::here("outputs", "dada2", "filtered")
+if (!dir.exists(path_to_filtered_reads)) dir.create(path_to_filtered_reads, recursive = TRUE)
+
+nopFw <- sort(list.files(path_to_trimmed_reads, pattern = "_1", full.names = TRUE))
+nopRv <- sort(list.files(path_to_trimmed_reads, pattern = "_2", full.names = TRUE))
+
+filtFs <- file.path(path_to_filtered_reads, basename(fnFs))
+filtRs <- file.path(path_to_filtered_reads, basename(fnRs))
+names(filtFs) <- sample_names
+names(filtRs) <- sample_names
+```
+
+Run filterAndTrim():
+
+```{r}
+(out <- dada2::filterAndTrim(
+  fwd = nopFw,
+  filt = filtFs,
+  rev = nopRv,
+  filt.rev = filtRs,
+  minLen = 150,
+  matchIDs = TRUE,
+  maxN = 0,
+  maxEE = c(1, 2),
+  truncQ = 2
+))
+```
+
+# VII. Denoising with DADA2
+
+## 1. Error Learning
+
+```{r}
+errF <- dada2::learnErrors(filtFs, randomize = TRUE, multithread = TRUE)
+errR <- dada2::learnErrors(filtRs, randomize = TRUE, multithread = TRUE)
+```
+
+Visualize error models:
+
+```{r}
+dada2::plotErrors(errF, nominalQ = TRUE)
+dada2::plotErrors(errR, nominalQ = TRUE)
+```
+
+## 2. Dereplication and Denoising
+
+```{r}
+derepFs <- dada2::derepFastq(filtFs, verbose = TRUE)
+derepRs <- dada2::derepFastq(filtRs, verbose = TRUE)
+
+dadaFs <- dada2::dada(derepFs, err = errF, multithread = TRUE)
+dadaRs <- dada2::dada(derepRs, err = errR, multithread = TRUE)
+```
+
+## 3. Merging Paired Reads
+
+```{r}
+mergers <- dada2::mergePairs(
+  dadaF = dadaFs,
+  derepF = derepFs,
+  dadaR = dadaRs,
+  derepR = derepRs,
+  maxMismatch = 0,
+  verbose = TRUE
+)
+```
+
+## 4. ASV Table and Chimera Removal
+
+```{r}
+seqtab <- dada2::makeSequenceTable(mergers)
+seqtab_nochim <- dada2::removeBimeraDenovo(seqtab, method = "consensus", multithread = TRUE, verbose = TRUE)
+```
+
+# VIII. Taxonomic Assignment
+
+```{r}
+taxonomy <- dada2::assignTaxonomy(
+  seqs = seqtab_nochim,
+  refFasta = silva_train_set,
+  taxLevels = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"),
+  multithread = TRUE,
+  minBoot = 60
+)
+
+taxonomy <- dada2::addSpecies(
+  taxonomy,
+  silva_species_assignment,
+  allowMultiple = FALSE
+)
+```
+
+# IX. Export Outputs
+
+## 1. Save Objects
+
+```{r}
+export_folder <- here::here("outputs", "dada2", "asv_table")
+if (!dir.exists(export_folder)) dir.create(export_folder, recursive = TRUE)
+
+saveRDS(seqtab_nochim, file = file.path(export_folder, "seqtab_nochim.rds"))
+saveRDS(taxonomy, file = file.path(export_folder, "taxonomy.rds"))
+```
+
+## 2. ASV IDs and Tables
+
+```{r}
+asv_seq <- colnames(seqtab_nochim)
+ndigits <- nchar(length(asv_seq))
+asv_id <- sprintf(paste0("ASV_%0", ndigits, "d"), seq_along(asv_seq))
+row.names(taxonomy) <- colnames(seqtab_nochim) <- names(asv_seq) <- asv_id
+
+taxonomy_export <- df_export(taxonomy, new_rn = "asv")
+seqtab_nochim_export <- t(seqtab_nochim) |> df_export(new_rn = "asv")
+```
+
+## 3. Write to Files
+
+```{r}
+write.table(taxonomy_export, file = file.path(export_folder, "taxonomy.tsv"), quote = FALSE, sep = "\t", row.names = FALSE)
+write.table(seqtab_nochim_export, file = file.path(export_folder, "asv_table.tsv"), quote = FALSE, sep = "\t", row.names = FALSE)
+
+cat(paste0(">", names(asv_seq), "\n", asv_seq), sep = "\n", file = file.path(export_folder, "asv.fasta"))
+```
+
+## 4. Log Table
+
+```{r}
+getN <- function(x) sum(dada2::getUniques(x))
+
+log_table <- data.frame(
+  input = primer_log$in_reads,
+  with_fwd_primer = primer_log$`w/adapters`,
+  with_rev_primer = primer_log$`w/adapters2`,
+  with_both_primers = out[, 1],
+  filtered = out[, 2],
+  denoisedF = sapply(dadaFs, getN),
+  denoisedR = sapply(dadaRs, getN),
+  merged = sapply(mergers, getN),
+  nonchim = rowSums(seqtab_nochim),
+  perc_retained = rowSums(seqtab_nochim) / out[, 1] * 100
+)
+rownames(log_table) <- sample_names
+```
+
+```{r}
+df_export(log_table, new_rn = "sample") |>
+  write.table(file = file.path(export_folder, "log_table.tsv"), quote = FALSE, sep = "\t", row.names = FALSE)
+```
+
+# X. Create Phyloseq Object
+
+```{r}
+input_dir <- here::here("outputs", "dada2", "asv_table")
+
+asv_table <- read.table(file = file.path(input_dir, "asv_table.tsv"), header = TRUE, sep = "\t", row.names = 1)
+asv_table <- subset(asv_table, select = -X2S337)
+
+taxonomy <- read.table(file = file.path(input_dir, "taxonomy.tsv"), header = TRUE, sep = "\t", row.names = 1)
+
+asv_seq <- Biostrings::readDNAStringSet(filepath = file.path(input_dir, "asv.fasta"), format = "fasta")
+
+file_path <- here::here("data", "context", "contexte.txt")
+context <- read.table(file = file_path, header = TRUE, sep = "\t")
+rownames(context) <- context[, 1]
+context <- context[, -1]
+```
+
+## Assemble Phyloseq Object
+
+```{r}
+physeq <- phyloseq::phyloseq(
+  phyloseq::otu_table(asv_table, taxa_are_rows = TRUE),
+  phyloseq::tax_table(as.matrix(taxonomy)),
+  phyloseq::sample_data(context),
+  phyloseq::refseq(asv_seq)
+)
+```
+
+## Remove Mitochondria and Chloroplasts
+
+```{r}
+physeq <- subset_taxa(physeq, Family != "Mitochondria")
+physeq <- subset_taxa(physeq, Order != "Chloroplast")
+physeq <- subset_taxa(physeq, Phylum != "NA")
+```
+
+## Export
+
+```{r}
+export_folder <- here::here("data")
+saveRDS(object = physeq,
+        file = file.path(export_folder, "physeq.rds"))
+```

@@ -1,0 +1,183 @@
+---
+title: "APERO Map"
+author: "Capucine LE CAM LIGIER"
+date: "17/02/2025"
+format: 
+  html:
+    code-fold: true
+---
+# I. Load Required Packages
+
+```{r global-options, include=FALSE}
+# Set global chunk options
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, error=FALSE, echo=FALSE)
+```
+
+```{r}
+# Load necessary libraries for spatial data handling and visualization
+packages <- c("sf", "ggplot2", "ggspatial", "rnaturalearth", "rnaturalearthdata", "dplyr", "here")
+lapply(packages, library, character.only = TRUE)
+```
+
+# II. Import and Prepare Data
+
+```{r}
+# Unzip and read the KML file containing station locations
+unzip(here("data", "THALASSA_stations.kmz"), exdir = here("data"))
+# List available layers to check structure of the KML file
+st_layers(here("data", "doc.kml"))
+# Read the relevant layer into an sf object
+points_sf <- st_read(here("data", "doc.kml"), layer = "THALASSA")
+# Check the Coordinate Reference System (CRS)
+print(st_crs(points_sf))
+```
+
+```{r}
+# Quick checks on station data
+unique(points_sf$Name)
+nrow(points_sf)
+```
+
+```{r}
+# Download world country boundaries for background map
+world <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+```{r}
+# Ensure both datasets use the same coordinate system (WGS84)
+points_sf <- st_transform(points_sf, crs = 4326)
+world <- st_transform(world, crs = 4326)
+```
+
+# III. Filter and Clean Station Data
+
+```{r}
+# Select only relevant APERO stations for visualization
+points_sf <- points_sf %>%
+  filter(Name %in% c("APERO_THA_St00", "APERO_THA_St04", "APERO_THA_St20", "APERO_THA_St32", 
+                     "APERO_THA_St33", "APERO_THA_St34", "APERO_THA_St_46",
+                     "APERO_THA_St_55", "APERO_THA_St_66", "APERO_THA_St76"))
+```
+
+```{r}
+# Remove any potential duplicates based on station name
+points_sf <- points_sf %>%
+  distinct(Name, .keep_all = TRUE)
+
+# Rename station codes to simpler labels
+points_sf <- points_sf %>%
+  mutate(Name = recode(Name,
+    "APERO_THA_St00" = "0",
+    "APERO_THA_St04" = "4",
+    "APERO_THA_St20" = "20",
+    "APERO_THA_St32" = "32",
+    "APERO_THA_St33" = "33",
+    "APERO_THA_St34" = "34",
+    "APERO_THA_St_46" = "46",
+    "APERO_THA_St_55" = "55",
+    "APERO_THA_St_66" = "66",
+    "APERO_THA_St76" = "76"
+  ))
+```
+
+```{r}
+# Drop any 3D geometry (Z dimension) if present
+selected_stations_2d <- points_sf %>%
+  st_zm()
+```
+
+```{r}
+# (Optional) Sort stations by coordinates
+selected_stations_sorted <- selected_stations_2d %>%
+  arrange(geometry)
+```
+
+```{r}
+# Ensure CRS is correctly defined (EPSG:4326 = WGS84)
+if (is.na(st_crs(selected_stations_2d))) {
+  selected_stations_2d <- st_set_crs(selected_stations_2d, 4326)
+}
+st_crs(selected_stations_2d)
+```
+
+```{r}
+# Create a line connecting the selected stations
+line_geometry <- st_sfc(st_linestring(st_coordinates(selected_stations_2d)[, 1:2]))
+line_sf <- st_sf(geometry = line_geometry) %>% 
+  st_set_crs(st_crs(selected_stations_2d))
+```
+
+IV.First Map (Quick View)
+
+```{r}
+limits <- c(xmin = -25, xmax = 0, ymin = 40, ymax = 54)
+
+ggplot() +
+  geom_sf(data = world, fill = "gray80", color = "black") +
+  geom_sf(data = selected_stations_2d, aes(color = Name), size = 5, shape = 16) +
+  geom_sf(data = line_sf, color = "black", size = 0.5) +
+  geom_text(data = selected_stations_2d, 
+            aes(x = st_coordinates(geometry)[,1], y = st_coordinates(geometry)[,2], label = Name), 
+            size = 3, vjust = 1.2, hjust = 2, color = "black") +
+  coord_sf(xlim = c(limits["xmin"], limits["xmax"]), ylim = c(limits["ymin"], limits["ymax"])) +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "tr", which_north = "true", style = north_arrow_fancy_orienteering) +
+  scale_x_continuous(name = "Longitude") +
+  scale_y_continuous(name = "Latitude") +
+  theme_minimal() +
+  theme(axis.title = element_text(size = 12, face = "bold"),
+        axis.text = element_text(size = 10),
+        legend.position = "none")
+```
+
+V. Final Map
+
+```{r}
+# Ensure station order is consistent
+points_sf <- points_sf %>%
+  mutate(Name = factor(Name, levels = c("0", "4", "20", "32", "33", "34", "46", "55", "66", "76")))
+
+# Re-create line with final station order
+line_geometry <- st_sfc(st_linestring(st_coordinates(points_sf)[, 1:2]))
+line_sf <- st_sf(geometry = line_geometry)
+line_sf <- st_set_crs(line_sf, st_crs(points_sf))
+```
+
+```{r}
+# Map extent for the APERO cruise
+limits <- c(xmin = -23, xmax = 0, ymin = 42, ymax = 53)
+
+# Extract coordinates for labels
+points_sf_df <- points_sf %>%
+  mutate(Longitude = st_coordinates(.)[,1], 
+         Latitude = st_coordinates(.)[,2])
+
+# Final map
+Fig2A <- ggplot() +
+  geom_sf(data = world, fill = "#cef5ff", color = "black", size = 0.5) +
+  geom_sf(data = points_sf, aes(color = Name), size = 5, shape = 16) +
+  geom_sf(data = line_sf, color = "grey50", size = 0.5) +
+  coord_sf(xlim = c(limits["xmin"], limits["xmax"]), ylim = c(limits["ymin"], limits["ymax"])) +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "br", which_north = "true", style = north_arrow_fancy_orienteering) +
+  scale_x_continuous(name = "Longitude") +
+  scale_y_continuous(name = "Latitude") +
+  theme_minimal() +
+  labs(color = "Stations") +
+  theme(
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 14),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14)
+  )
+```
+
+```{r}
+# Save the figure to the "output" folder
+ggsave(filename = here::here("outputs", "Fig2.tiff"),
+       plot = Fig2A, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+```
+
+
+
+

@@ -1,0 +1,268 @@
+---
+title: "Supplementary PCoA skin and liver"
+author: "Capucine LE CAM LIGIER"
+date: "2024-04-01"
+format: 
+  html:
+    code-fold: true
+---
+
+# I. Load Required Packages
+
+```{r global-options, include=FALSE}
+# Global chunk settings
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, error=FALSE, echo=FALSE)
+```
+
+```{r }
+# Load required packages
+packages <- c(
+  "dada2", "phyloseq", "readr", "Biostrings", "DECIPHER", "ape", "ShortRead",
+  "tidyverse", "vegan", "microbiome", "BiocManager", "ggplot2", "dplyr",
+  "tidyr", "knitr", "rmarkdown", "readxl", "patchwork", "viridis", "here", "grid", "VennDiagram"
+)
+lapply(packages, library, character.only = TRUE)
+```
+
+# II. Load Data
+
+```{r}
+# Load phyloseq object
+physeq <- readRDS(here("data", "physeq.rds"))
+```
+
+# III. Venn Diagram (ASV Overlap)
+
+```{r}
+# Subset by tissue type
+GUT   <- subset_samples(physeq, type == "gut")
+SKIN  <- subset_samples(physeq, type == "skin")
+LIVER <- subset_samples(physeq, type == "liver")
+
+# Helper function to extract present ASVs
+get_present_asvs <- function(physeq_obj) {
+  otu <- otu_table(physeq_obj)
+  if (taxa_are_rows(otu)) rownames(otu)[rowSums(otu) > 0] else colnames(otu)[colSums(otu) > 0]
+}
+
+# Get ASVs for each tissue type
+asvs_skin  <- get_present_asvs(SKIN)
+asvs_gut   <- get_present_asvs(GUT)
+asvs_liver <- get_present_asvs(LIVER)
+
+# Create ASV list
+asv_list <- list(SKIN = asvs_skin, GUT = asvs_gut, LIVER = asvs_liver)
+
+# Total number of unique ASVs
+total_unique_asvs <- length(unique(c(asvs_skin, asvs_gut, asvs_liver)))
+
+# Compute intersections and unique sets
+skin_only   <- setdiff(asvs_skin, union(asvs_gut, asvs_liver))
+gut_only    <- setdiff(asvs_gut, union(asvs_skin, asvs_liver))
+liver_only  <- setdiff(asvs_liver, union(asvs_skin, asvs_gut))
+
+skin_gut    <- intersect(asvs_skin, asvs_gut)
+skin_liver  <- intersect(asvs_skin, asvs_liver)
+gut_liver   <- intersect(asvs_gut, asvs_liver)
+common_all  <- Reduce(intersect, list(asvs_skin, asvs_gut, asvs_liver))
+```
+
+```{r}
+# Create base Venn diagram
+venn_plot <- venn.diagram(
+  x = asv_list,
+  filename = NULL,
+  fill = c("#FF6F61", "#6BAED6", "#88B04B"),
+  alpha = 0.5,
+  cex = 1.5,
+  cat.cex = 1.3,
+  cat.dist = c(0.05, 0.05, 0.08),
+  fontfamily = "Arial",
+  cat.fontfamily = "Arial",
+  cat.col = c("#FF6F61", "#6BAED6", "#88B04B"),
+  margin = 0.1
+)
+
+# Function to convert count to % label
+percent <- function(x) paste0(round(100 * length(x) / total_unique_asvs, 1), "%")
+
+# Save Venn with labels as a TIFF
+tiff(here::here("outputs", "FigS3.tiff"), width = 2000, height = 2000, res = 300)
+grid.newpage()
+grid.draw(venn_plot)
+
+label_venn <- function(text, x, y) {
+  grid.text(text, x = x, y = y, gp = gpar(fontfamily = "Arial", fontsize = 12))
+}
+
+# Add percentage labels
+label_venn(paste0("Total: ", total_unique_asvs, " ASVs"), x = 0.5, y = 0.95)
+label_venn(percent(skin_only),   x = 0.23, y = 0.64)
+label_venn(percent(gut_only),    x = 0.77, y = 0.64)
+label_venn(percent(liver_only),  x = 0.50, y = 0.28)
+label_venn(percent(skin_gut),    x = 0.50, y = 0.72)
+label_venn(percent(skin_liver),  x = 0.36, y = 0.43)
+label_venn(percent(gut_liver),   x = 0.64, y = 0.43)
+label_venn(percent(common_all),  x = 0.50, y = 0.52)
+
+dev.off()
+```
+
+# IV. Normalize and Filter Data
+
+```{r}
+# Rarefy to equal depth
+physeq_rar <- rarefy_even_depth(physeq, sample.size = 13000)
+
+# Relative abundance transformation
+physeq_rar_relab <- transform_sample_counts(physeq_rar, function(x) x / sum(x))
+
+# Filter taxa with relative abundance ≥ 0.1%
+physeq_rar_filter <- filter_taxa(physeq_rar_relab, function(x) sum(x) >= 0.001, TRUE)
+
+# Aggregate at Family level
+physeq_fam <- tax_glom(physeq_rar_filter, taxrank = "Family", NArm = FALSE)
+```
+
+# V. Skin PCoA
+
+```{r}
+# Subset for skin samples
+SKIN <- subset_samples(physeq_fam, type == "skin")
+Fam_skin <- prune_taxa(taxa_sums(SKIN) > 0.3, SKIN)
+Fam_skin <- subset_samples(Fam_skin, !is.na(sample_data(Fam_skin)$migrant_pattern))
+sample_data(Fam_skin)$migrant_pattern <- factor(as.character(sample_data(Fam_skin)$migrant_pattern))
+ordination_skin <- ordinate(Fam_skin, "MDS", distance = "bray")
+```
+
+```{r}
+# PCoA: by sample, colored by family
+fish_skin <- plot_ordination(Fam_skin, ordination_skin, type = "samples", color = "family") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  scale_color_viridis(discrete = TRUE, option = "magma", name = "Family") +
+  guides(color = guide_legend(title = "Fish families")) +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10, face = "italic")
+  )
+```
+
+```{r}
+# PCoA: by taxa
+taxa_skin <- plot_ordination(Fam_skin, ordination_skin, color = "Family", type = "taxa") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  guides(color = guide_legend(title = "Taxa")) +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10, face = "italic")
+  )
+```
+
+```{r}
+# PCoA: by trophic level and migration pattern
+trait_skin <- plot_ordination(Fam_skin, ordination_skin, color = "trophic_level", shape = "migrant_pattern") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  scale_color_viridis_c(option = "viridis", name = "Trophic Position") +
+  labs(shape = "Migration Pattern") +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10)
+  )
+```
+
+```{r}
+# Combine skin PCoA panels
+FigS1 <- trait_skin / fish_skin / taxa_skin +
+  plot_layout(ncol = 1, guides = "collect") +
+  plot_annotation(tag_levels = "A") & theme(legend.position = "right")
+
+ggsave(
+  filename = here::here("outputs", "FigS1.tiff"),
+  plot = FigS1,
+  dpi = 300, width = 11, height = 9, units = "in", device = "tiff"
+)
+```
+
+# VI. Liver PCoA
+
+```{r}
+# Subset for liver samples
+LIVER <- subset_samples(physeq_fam, type == "liver")
+Fam_liver <- prune_taxa(taxa_sums(LIVER) > 0.3, LIVER)
+Fam_liver <- subset_samples(Fam_liver, !is.na(sample_data(Fam_liver)$migrant_pattern))
+sample_data(Fam_liver)$migrant_pattern <- factor(as.character(sample_data(Fam_liver)$migrant_pattern))
+ordination_liver <- ordinate(Fam_liver, "MDS", distance = "bray")
+```
+
+```{r}
+# Sample-based PCoA
+fish_liver <- plot_ordination(Fam_liver, ordination_liver, type = "samples", color = "family") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  scale_color_viridis(discrete = TRUE, option = "magma", name = "Family") +
+  guides(color = guide_legend(title = "Fish families")) +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10, face = "italic")
+  )
+```
+
+```{r}
+# Taxa-based PCoA
+taxa_liver <- plot_ordination(Fam_liver, ordination_liver, color = "Family", type = "taxa") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  guides(color = guide_legend(title = "Taxa")) +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10, face = "italic")
+  )
+```
+
+```{r}
+# Trait-based PCoA
+trait_liver <- plot_ordination(Fam_liver, ordination_liver, color = "trophic_level", shape = "migrant_pattern") +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  scale_color_viridis_c(option = "viridis", name = "Trophic Position") +
+  labs(shape = "Migration Pattern") +
+  coord_fixed() +
+  theme(
+    axis.title = element_text(size = 10, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10)
+  )
+```
+
+```{r}
+# Combine liver PCoA panels
+FigS2 <- trait_liver / fish_liver / taxa_liver +
+  plot_layout(ncol = 1, guides = "collect") +
+  plot_annotation(tag_levels = "A") & theme(legend.position = "right")
+
+ggsave(
+  filename = here::here("outputs", "FigS2.tiff"),
+  plot = FigS2,
+  dpi = 300, width = 11, height = 9, units = "in", device = "tiff"
+)
+```
+

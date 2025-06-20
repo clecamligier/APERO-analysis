@@ -1,0 +1,339 @@
+---
+title: "Data analysis : alpha and beta diversity.Rmd"
+author: "Capucine LE CAM LIGIER"
+date: "2024-04-01"
+format: 
+  html:
+    code-fold: true
+---
+
+# I. Load Required Packages
+
+```{r global-options, include=FALSE}
+# Global chunk settings
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, error=FALSE, echo=FALSE)
+```
+
+```{r }
+# Load required libraries for microbiome analysis and plotting
+packages <- c(
+  "dada2", "phyloseq", "readr", "Biostrings", "DECIPHER", "ape", "ShortRead", "tidyverse",
+  "vegan", "microbiome", "BiocManager", "ggplot2", "dplyr", "tidyr", "knitr",
+  "rmarkdown", "readxl", "patchwork", "scales", "here", "viridis"
+)
+lapply(packages, library, character.only = TRUE)
+```
+
+# II. Load Data
+
+```{r}
+# Load pre-processed phyloseq object
+physeq <- readRDS(here("data", "physeq.rds"))
+```
+
+#III. Alpha diversity
+
+## 1. Rarefaction, Filtering, and Taxonomic Aggregation
+
+```{r}
+# Rarefy the dataset to an even sequencing depth
+physeq_rar <- rarefy_even_depth(physeq, sample.size = 13000)
+# Transform to relative abundance
+physeq_rar_relab <- transform_sample_counts(physeq_rar, function(x) x / sum(x))
+# Filter rare taxa (< 0.1%)
+physeq_rar_filter <- filter_taxa(physeq_rar_relab, function(x) sum(x) >= 0.001, TRUE)
+# Aggregate taxa to Family level
+physeq_fam <- tax_glom(physeq_rar_filter, taxrank = "Family", NArm = FALSE)
+```
+
+## 2. Compute and Merge Alpha Diversity Indices
+
+```{r}
+# Calculate alpha diversity indices
+alpha_indices <- microbiome::alpha(
+  physeq_fam,
+  index = c("observed", "diversity_gini_simpson", "diversity_shannon", "evenness_pielou", "dominance_relative"))
+# Merge alpha diversity back into phyloseq object
+alpha_indices <- phyloseq::sample_data(alpha_indices)
+physeq_alpha <- merge_phyloseq(physeq_fam, alpha_indices)
+```
+
+## 3. Extract Richness Data
+
+```{r}
+# Plot richness and extract underlying data
+richness_data <- plot_richness(physeq_rar, measures = c("Observed", "Shannon", "Simpson")) +
+  theme_minimal()
+df <- as.data.frame(richness_data$data)
+```
+
+## 4.Plot Alpha Diversity
+
+```{r}
+# Create boxplots for alpha diversity
+Fig3 <- ggplot(df, aes(x = type, y = value, fill = family, color = family)) +
+  geom_boxplot(alpha = 0.8) +
+  facet_wrap(~ variable, scales = "free") +
+  scale_color_manual(values = scales::hue_pal()(length(unique(df$family)))) +
+  theme_bw() +
+  labs(x = NULL, y = NULL) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 16),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(face = "italic", size = 14),
+    strip.text = element_text(face = "bold", size = 14),
+    strip.background = element_rect(fill = "white", color = "black")
+  ) +
+  guides(fill = guide_legend(title = "Fish family"), color = guide_legend(title = "Fish family"))
+
+ggsave(filename = here::here("outputs", "Fig3.tiff"), plot = Fig3, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+```
+
+# IV. Barplot by Family
+
+```{r}
+# Keep most abundant families
+physeq_fam <- prune_taxa(taxa_sums(physeq_fam) > 0.5, physeq_fam)
+
+# Melt to long format for plotting
+ps_data <- psmelt(physeq_fam)
+
+# Define color palette
+family_colors <- c("brown","black", "magenta", "green", "darkblue", "red", "orange", "pink", "yellow", "grey", "blue", "lightgreen", "cyan")
+
+# Plot relative abundances per class
+Fig4 <- ggplot(ps_data, aes(x = Class, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~type, ncol = 3, scales = "free_y") +
+  scale_fill_manual(name = "Family", values = family_colors) +
+  labs(x = "Class", y = "Relative Abundance (%)") +
+  guides(fill = guide_legend(ncol = 1)) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, face = "italic", size = 14),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(face = "italic", size = 14),
+    strip.text = element_text(face = "bold", size = 14),
+    strip.background = element_rect(fill = "white", color = "black")
+  )
+
+ggsave(filename = here::here("outputs", "Fig4.tiff"), plot = Fig4, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+```
+
+# V. Barplot by Genus per Fish Species
+
+```{r}
+# Aggregate at Genus level and filter
+physeq_gen <- tax_glom(physeq_rar_filter, taxrank = "Genus")
+physeq_gen <- prune_taxa(taxa_sums(physeq_gen) > 0.5, physeq_gen)
+genus_data <- psmelt(physeq_gen)
+
+# Set Genus color palette
+palette_family <- c(
+  "Acinetobacter" = "#FFFACD", "Akkermansia" = "#FFDFBA", "Aliivibrio" = "red",
+  "Bifidobacterium" = "#BAFFC9", "Candidatus Hepatoplasma" = "#BAE1FF", "Cutibacterium" = "magenta",
+  "Enterovibrio" = "orange", "Escherichia-Shigella" = "darkblue", "Lactobacillus" = "grey76",
+  "Ligilactobacillus" = "brown", "Limosilactobacillus" = "#FFC3A0", "Mycoplasma" = "purple",
+  "Photobacterium" = "#4cfaea", "Pseudoalteromonas" = "#b4f561", "Pseudomonas" = "yellow",
+  "Psychrobacter" = "pink", "Vibrio" = "#3149fc", "Weissella" = "#ffe9cc")
+
+# Relabel fish species
+genus_data$specie <- factor(
+  genus_data$specie,
+  levels = c(
+    "Argyropelecus_hemigymnus", "Argyropelecus_olfersii", "Benthosema_glaciale",
+    "Symbolophorus_veranyi", "Notoscopelus_kroyeri", "Lobianchia_gemellarii",
+    "Lampanyctus_crocodilus", "Electrona_risso", "Myctophum_punctatum",
+    "Chauliodus_sloani", "Stomias_boa", "Malacosteus_niger",
+    "Melanocetus_johnsonii", "Sigmops_elongatus", "Eurypharynx_pelecanoides",
+    "Nansenia_oblita", "Serrivomer_beanii"),
+  labels = c(
+    "Argyropelecus hemigymnus", "Argyropelecus olfersii", "Benthosema glaciale",
+    "Symbolophorus veranyi", "Notoscopelus kroyeri", "Lobianchia gemellarii",
+    "Lampanyctus crocodilus", "Electrona risso", "Myctophum punctatum",
+    "Chauliodus sloani", "Stomias boa", "Malacosteus niger",
+    "Melanocetus johnsonii", "Sigmops elongatus", "Eurypharynx pelecanoides",
+    "Nansenia oblita", "Serrivomer beanii"))
+```
+
+
+```{r}
+# Plot genus composition by species
+Fig5 <- ggplot(genus_data, aes(x = specie, y = Abundance, fill = Genus)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap(~type, scales = "free_x") +
+  scale_fill_manual(values = palette_family) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(x = "Fish species", y = "Relative abundance", fill = "Genus") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, face = "italic", size = 14),
+    axis.text.y = element_text(hjust = 1, size = 12),
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(face = "italic", size = 14),
+    strip.text = element_text(face = "bold", size = 14),
+    strip.background = element_rect(fill = "white", color = "black")
+  )
+```
+
+```{r}
+ggsave(filename = here::here("outputs", "Fig5.tiff"), plot = Fig5, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+```
+
+# VII. PCoA Ordination (Gut Only)
+
+```{r}
+GUT <- subset_samples(physeq_fam, type == "gut")
+Fam_gut <- prune_taxa(taxa_sums(GUT) > 0.3, GUT)
+Fam_gut <- subset_samples(Fam_gut, !is.na(sample_data(Fam_gut)$migrant_pattern))
+sample_data(Fam_gut)$migrant_pattern <- factor(as.character(sample_data(Fam_gut)$migrant_pattern))
+matrix_ordination_gut_BC <- ordinate(Fam_gut, "MDS", distance = "bray")
+```
+
+```{r}
+# Samples ordination
+fish_gut <- phyloseq::plot_ordination(Fam_gut, matrix_ordination_gut_BC, 
+                                      type = "samples", color = "family") +  
+  geom_point(size = 4, alpha = 1) +  
+  theme_bw() +  
+  scale_color_viridis(
+    discrete = TRUE,
+    option = "magma",
+    name = "Family" 
+  ) +
+  guides(
+    color = guide_legend(title = "Fish families")  
+  ) +
+  coord_fixed() +
+  theme(
+    axis.title.x = element_text(size = 10, face = "bold"),  
+    axis.title.y = element_text(size = 10, face = "bold"),  
+    axis.text.x  = element_text(size = 10),                 
+    axis.text.y  = element_text(size = 10),                 
+    legend.title = element_text(size = 11, face = "bold"),  
+    legend.text  = element_text(size = 10, face = "italic")   
+  )
+# Taxa ordination
+taxa_gut <- phyloseq::plot_ordination(Fam_gut, matrix_ordination_gut_BC, 
+                                      color = "Family", type = "taxa") +
+  geom_point(size = 4, alpha = 1) + 
+  theme_bw() +  
+  guides(
+    color = guide_legend(title = "Taxa")
+  ) +
+  coord_fixed() +
+  theme(
+    axis.title.x = element_text(size = 10, face = "bold"),  
+    axis.title.y = element_text(size = 10, face = "bold"),  
+    axis.text.x  = element_text(size = 10),                 
+    axis.text.y  = element_text(size = 10),                 
+    legend.title = element_text(size = 11, face = "bold"), 
+    legend.text  = element_text(size = 10, face = "italic")   
+  )
+# Trait ordination
+trait_gut <- phyloseq::plot_ordination(
+  Fam_gut, matrix_ordination_gut_BC,
+  color = "trophic_level", type = "samples",
+  shape = "migrant_pattern"
+) +
+  geom_point(size = 4, alpha = 1) +
+  theme_bw() +
+  scale_color_viridis_c(option = "viridis", name = "Trophic Position") +
+  labs(shape = "Migration Pattern") +  
+  coord_fixed() +
+  theme(
+    axis.title.x = element_text(size = 10, face = "bold"),  
+    axis.title.y = element_text(size = 10, face = "bold"),  
+    axis.text.x  = element_text(size = 10),                 
+    axis.text.y  = element_text(size = 10),                 
+    legend.title = element_text(size = 11, face = "bold"),  
+    legend.text  = element_text(size = 10)   
+  )
+```
+
+```{r}
+# Combined ordination figure
+Fig6 <- trait_gut / fish_gut / taxa_gut +
+  plot_layout(ncol = 1, guides = "collect") +
+  plot_annotation(tag_levels = "A") & theme(legend.position = "right")
+
+ggsave(filename = here::here("outputs", "Fig6.tiff"), plot = Fig6, dpi = 300, width = 13, height = 9, units = "in", device = "tiff")
+```
+
+#VIII. Bioluminescent Genera Analysis
+
+## 1. Extract Target Genera
+
+```{r}
+# Define the list of genera known to contain bioluminescent species
+target_genera <- c("Vibrio", "Photobacterium", "Aliivibrio", "Enterovibrio")
+
+# Extract taxonomic and abundance data from the phyloseq object
+tax_data <- as.data.frame(tax_table(physeq))
+otu_data <- as.data.frame(otu_table(physeq))
+
+# Identify ASVs that belong to the target genera
+target_asv <- rownames(tax_data)[tax_data$Genus %in% target_genera]
+
+# Subset OTU table for selected ASVs only
+otu_filtered <- otu_data[target_asv, ]
+
+# Transform the OTU table to long format for plotting
+otu_long <- otu_filtered %>%
+  rownames_to_column(var = "ASV") %>%
+  pivot_longer(-ASV, names_to = "ID", values_to = "Abundance")
+
+# Re-add taxonomic annotations
+tax_data <- tax_data %>% rownames_to_column(var = "ASV")
+otu_long <- left_join(otu_long, tax_data, by = "ASV")
+
+# Add sample metadata to the long-format OTU table
+metadata <- as.data.frame(sample_data(physeq))
+otu_long <- left_join(otu_long, metadata, by = "ID")
+```
+
+## 2. Plot Bioluminescent Genera Distribution
+
+```{r}
+# Filter data for gut samples and remove any with missing migration info
+otu_gut <- otu_long %>%
+  filter(type == "gut", !is.na(migrant_pattern))
+
+# Create stacked barplot showing the distribution of bioluminescent genera
+Fig7 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_grid(diet_guild ~ migrant_pattern, scales = "free_y") +
+  scale_fill_manual(
+    values = c(
+      "Vibrio" = "blue",
+      "Photobacterium" = "turquoise",
+      "Aliivibrio" = "red",
+      "Enterovibrio" = "orange"
+    )
+  ) +
+  labs(
+    x = "Fish family",
+    y = "Abundance (read counts)",
+    fill = "Genera"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold", size = 11),
+    axis.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "italic"),
+    axis.text.y = element_text(size = 14),
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(face = "italic", size = 14)
+  )
+```
+
+```{r}
+# Save the figure in the output directory using here::here()
+ggsave(filename = here::here("outputs", "Fig7.tiff"), plot = Fig7, dpi = 300, width = 10, height = 10, units = "in", device = "tiff")
+```
