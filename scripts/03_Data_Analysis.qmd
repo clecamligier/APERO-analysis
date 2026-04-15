@@ -350,15 +350,15 @@ metadata <- as.data.frame(sample_data(physeq))
 otu_long <- left_join(otu_long, metadata, by = "ID")
 ```
 
-## 2. Plot Bioluminescent Genera Distribution
+## 2. Plot bioluminescent genera distribution
 
 ```{r}
 # Filter data for gut samples and remove any with missing migration info
 otu_gut <- otu_long %>%
   filter(type == "gut", !is.na(migrant_pattern))
 
-# Create stacked barplot showing the distribution of bioluminescent genera
-Fig5 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
+# Panel A
+Fig5A <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
   geom_bar(stat = "identity", position = "stack") +
   facet_grid(diet_guild ~ migrant_pattern, scales = "free_y") +
   scale_fill_manual(
@@ -372,20 +372,192 @@ Fig5 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
   labs(
     x = "Fish family",
     y = "Abundance (read counts)",
-    fill = "Genera"
+    fill = "Genus"
   ) +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 16) +
   theme(
-    strip.text = element_text(face = "bold", size = 11),
-    axis.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold", size = 13),
+    axis.title = element_text(face = "bold", size = 16),
     axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "italic"),
     axis.text.y = element_text(size = 14),
-    legend.title = element_text(face = "bold", size = 14),
+    legend.title = element_text(face = "bold", size = 16),
     legend.text = element_text(face = "italic", size = 14)
   )
 ```
 
 ```{r}
-# Save the figure in the output directory using here::here()
-ggsave(filename = here::here("outputs", "Fig5.tiff"), plot = Fig5, dpi = 300, width = 10, height = 10, units = "in", device = "tiff")
+# Save
+ggsave(filename = here::here("outputs", "Fig5A.tiff"), plot = Fig5A, dpi = 300, width = 10, height = 9, units = "in", device = "tiff")
+```
+
+## 3. qPCR lux
+
+```{r}
+#Load Excel sheets
+#file <- here::here("data", "Bilan_qPCR.xlsx")
+file <- "~/Desktop/Bilan_qPCR.xlsx"
+df_16S  <- read_excel(file, sheet = "16 Bact")
+df_luxA <- read_excel(file, sheet = "luxA")
+df_luxC <- read_excel(file, sheet = "luxC")
+df_luxF <- read_excel(file, sheet = "luxF")
+```
+
+```{r}
+#Rename useful columns
+df_16S <- df_16S %>%
+  dplyr::rename(
+    ESPECE_16S = `ESPECE`,
+    FAMILY_16S = `FAMILY`,
+    moyenne_16S = `moyenne`,
+    ecart_type_16S = `ecart type`
+  )
+
+df_luxA <- df_luxA %>%
+  dplyr::rename(
+    ESPECE_luxA = `ESPECE`,
+    FAMILY_luxA = `FAMILY`,
+    moyenne_luxA = `moyenne`,
+    ecart_type_luxA = `ecart type`
+  )
+
+df_luxC <- df_luxC %>%
+  dplyr::rename(
+    ESPECE_luxC = `ESPECE`,
+    FAMILY_luxC = `FAMILY`,
+    moyenne_luxC = `moyenne`,
+    ecart_type_luxC = `ecart type`
+  )
+
+df_luxF <- df_luxF %>%
+  dplyr::rename(
+    ESPECE_luxF = `ESPECE`,
+    FAMILY_luxF = `FAMILY`,
+    moyenne_luxF = `moyenne`,
+    ecart_type_luxF = `ecart type`
+  )
+```
+
+```{r}
+#Merge all sheets by ID
+df <- df_16S %>%
+  left_join(df_luxA %>% select(ID, moyenne_luxA, ecart_type_luxA), by = c("ID" = "ID")) %>%
+  left_join(df_luxC %>% select(ID, moyenne_luxC, ecart_type_luxC), by = c("ID" = "ID")) %>%
+  left_join(df_luxF %>% select(ID, moyenne_luxF, ecart_type_luxF), by = c("ID" = "ID"))
+```
+
+```{r}
+# Calculate lux / 16S ratios
+df <- df %>%
+  mutate(
+    groupe_espece = str_replace(ESPECE_16S, " [0-9]+$", ""),
+    ratio_luxA_16S = moyenne_luxA / moyenne_16S * 100,
+    ratio_luxC_16S = moyenne_luxC / moyenne_16S * 100,
+    ratio_luxF_16S = moyenne_luxF / moyenne_16S * 100
+  )
+```
+
+```{r}
+#Reshape to long format and summarise
+df_long <- df %>%
+  select(groupe_espece, starts_with("ratio_lux")) %>%
+  pivot_longer(
+    cols = starts_with("ratio_lux"),
+    names_to = "gene",
+    values_to = "ratio"
+  ) %>%
+  mutate(
+    gene = recode(
+      gene,
+      ratio_luxA_16S = "luxA",
+      ratio_luxC_16S = "luxC",
+      ratio_luxF_16S = "luxF"
+    )
+  )
+```
+
+```{r}
+df_summary <- df_long %>%
+  group_by(gene, groupe_espece) %>%
+  summarise(
+    moyenne_ratio = mean(ratio, na.rm = TRUE),
+    sd_ratio = sd(ratio, na.rm = TRUE),
+    n = sum(!is.na(ratio)),
+    se_ratio = sd_ratio / sqrt(n),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sd_ratio = ifelse(is.na(sd_ratio), 0, sd_ratio),
+    se_ratio = ifelse(is.na(se_ratio), 0, se_ratio)
+  )
+```
+
+```{r}
+species_order <- c(
+  "Argyropelecus hemigymnus",
+  "Argyropelecus olfersi",
+  "Benthosema glaciale",
+  "Lobianchia gemellarii",
+  "Myctophum punctatum",
+  "Notoscopelus kroyeri",
+  "Eurypharynx pelecanoides")
+
+df_summary <- df_summary %>%
+  mutate(
+    groupe_espece = factor(groupe_espece, levels = species_order),
+    gene = factor(gene, levels = c("luxA", "luxC", "luxF")))
+```
+
+```{r}
+Fig5B <- ggplot(df_summary, aes(x = groupe_espece, y = moyenne_ratio)) +
+  geom_col(fill = "#cef5ff", color = "darkblue") +
+  geom_errorbar(
+    aes(
+      ymin = pmax(moyenne_ratio - se_ratio, 0),
+      ymax = moyenne_ratio + se_ratio
+    ),
+    width = 0.2,
+    linewidth = 0.6
+  ) +
+  facet_grid(rows = vars(gene), scales = "fixed", switch = "y") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    x = NULL,
+    y = "lux / 16S ratio (%)"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    strip.placement = "outside",
+    strip.text.y.left = element_text(face = "italic", size = 16, angle = 0),
+    axis.text.x = element_text(angle = 60, hjust = 1, size = 16, face = "italic"),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 18, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+Fig5B
+```
+
+```{r}
+#save
+ggsave("qPCR_lux_APERO.png", plot = lux_plot, dpi = 300, width = 8, height = 8)
+```
+
+```{r}
+Fig5 <- Fig5A / Fig5B +
+  plot_annotation(tag_levels = "A") &
+  theme(
+    plot.tag = element_text(size = 22, face = "bold")
+  )
+```
+
+```{r}
+ggsave(
+  filename = here::here("outputs", "Fig5.tiff"),
+  plot = Fig5,
+  dpi = 300,
+  width = 10,
+  height = 14,
+  units = "in",
+  device = "tiff"
+)
 ```
