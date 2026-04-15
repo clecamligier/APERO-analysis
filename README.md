@@ -7,7 +7,7 @@ This repository contains the R scripts, data structure, and documentation associ
 
 This study focuses on microbial communities associated with different tissues—**gut**, **liver**, and **skin**—of mesopelagic fishes collected from the **Northeast Atlantic Ocean**.
 
-Using **16S rRNA gene metabarcoding**, we analyze how host traits such as **trophic level** and **diel vertical migration** shape microbiome diversity and composition. Results support the **bioluminescent shunt hypothesis**, with implications for **carbon flux regulation** in the deep sea.
+Using **16S rRNA gene metabarcoding**, we analyze how host traits such as **trophic level** and **diel vertical migration** shape microbiome diversity and composition. 
 
 ## Key Findings
 
@@ -17,11 +17,9 @@ Using **16S rRNA gene metabarcoding**, we analyze how host traits such as **trop
     - Lower trophic-level fishes tend to harbor higher levels of *Photobacterium*.
     - Migratory species show distinct microbiomes compared to deep-sea residents.
 - These findings support the idea that both behavior and diet influence microbial dispersal and trophic connectivity in the mesopelagic zone.
-- The abundance of luminous bacteria supports the **bioluminescent shunt hypothesis**, suggesting enhanced visibility of sinking particles to predators, potentially influencing deep-sea carbon flow.
 
 ## Data Availability
-Raw sequencing data have been deposited in the NCBI Sequence Read Archive (SRA) under the BioProject accession number PRJNAxxxxxx (pending release).
-
+Raw sequencing data have been deposited in the NCBI Sequence Read Archive (SRA) under the BioProject accession number PRJNA1453509.
 The BioProject includes:
 
 Demultiplexed FASTQ files for all tissue samples
