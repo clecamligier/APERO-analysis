@@ -33,7 +33,7 @@ physeq <- readRDS(here("data", "physeq.rds"))
 
 #III. Alpha diversity
 
-## 1. Rarefaction, Filtering, and Taxonomic Aggregation
+## 1. Rarefaction, filtering, and taxonomic aggregation
 
 ```{r}
 # Rarefy the dataset to an even sequencing depth
@@ -71,7 +71,7 @@ df <- as.data.frame(richness_data$data)
 
 ```{r}
 # Create boxplots for alpha diversity
-Fig3 <- ggplot(df, aes(x = type, y = value, fill = family, color = family)) +
+Fig1 <- ggplot(df, aes(x = type, y = value, fill = family, color = family)) +
   geom_boxplot(alpha = 0.8) +
   facet_wrap(~ variable, scales = "free") +
   scale_color_manual(values = scales::hue_pal()(length(unique(df$family)))) +
@@ -88,7 +88,7 @@ Fig3 <- ggplot(df, aes(x = type, y = value, fill = family, color = family)) +
   ) +
   guides(fill = guide_legend(title = "Fish family"), color = guide_legend(title = "Fish family"))
 
-ggsave(filename = here::here("outputs", "Fig3.tiff"), plot = Fig3, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig1.tiff"), plot = Fig3, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
 ```
 
 # IV. Barplot by Family
@@ -104,7 +104,7 @@ ps_data <- psmelt(physeq_fam)
 family_colors <- c("brown","black", "magenta", "green", "darkblue", "red", "orange", "pink", "yellow", "grey", "blue", "lightgreen", "cyan")
 
 # Plot relative abundances per class
-Fig4 <- ggplot(ps_data, aes(x = Class, y = Abundance, fill = Family)) +
+Fig2 <- ggplot(ps_data, aes(x = Class, y = Abundance, fill = Family)) +
   geom_bar(stat = "identity", position = "stack") +
   facet_wrap(~type, ncol = 3, scales = "free_y") +
   scale_fill_manual(name = "Family", values = family_colors) +
@@ -121,7 +121,7 @@ Fig4 <- ggplot(ps_data, aes(x = Class, y = Abundance, fill = Family)) +
     strip.background = element_rect(fill = "white", color = "black")
   )
 
-ggsave(filename = here::here("outputs", "Fig4.tiff"), plot = Fig4, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig2.tiff"), plot = Fig2, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
 ```
 
 # V. Barplot by Genus per Fish Species
@@ -163,7 +163,7 @@ genus_data$specie <- factor(
 
 ```{r}
 # Plot genus composition by species
-Fig5 <- ggplot(genus_data, aes(x = specie, y = Abundance, fill = Genus)) +
+Fig3 <- ggplot(genus_data, aes(x = specie, y = Abundance, fill = Genus)) +
   geom_bar(stat = "identity", position = "fill") +
   facet_wrap(~type, scales = "free_x") +
   scale_fill_manual(values = palette_family) +
@@ -183,7 +183,7 @@ Fig5 <- ggplot(genus_data, aes(x = specie, y = Abundance, fill = Genus)) +
 ```
 
 ```{r}
-ggsave(filename = here::here("outputs", "Fig5.tiff"), plot = Fig5, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig3.tiff"), plot = Fig3, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
 ```
 
 # VII. PCoA Ordination (Gut Only)
@@ -259,11 +259,11 @@ trait_gut <- phyloseq::plot_ordination(
 
 ```{r}
 # Combined ordination figure
-Fig6 <- trait_gut / fish_gut / taxa_gut +
+Fig4 <- trait_gut / fish_gut / taxa_gut +
   plot_layout(ncol = 1, guides = "collect") +
   plot_annotation(tag_levels = "A") & theme(legend.position = "right")
 
-ggsave(filename = here::here("outputs", "Fig6.tiff"), plot = Fig6, dpi = 300, width = 13, height = 9, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig4.tiff"), plot = Fig4, dpi = 300, width = 13, height = 9, units = "in", device = "tiff")
 ```
 
 #VIII. Bioluminescent Genera Analysis
@@ -306,7 +306,7 @@ otu_gut <- otu_long %>%
   filter(type == "gut", !is.na(migrant_pattern))
 
 # Create stacked barplot showing the distribution of bioluminescent genera
-Fig7 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
+Fig5 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
   geom_bar(stat = "identity", position = "stack") +
   facet_grid(diet_guild ~ migrant_pattern, scales = "free_y") +
   scale_fill_manual(
@@ -335,5 +335,5 @@ Fig7 <- ggplot(otu_gut, aes(x = family, y = Abundance, fill = Genus)) +
 
 ```{r}
 # Save the figure in the output directory using here::here()
-ggsave(filename = here::here("outputs", "Fig7.tiff"), plot = Fig7, dpi = 300, width = 10, height = 10, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig5.tiff"), plot = Fig5, dpi = 300, width = 10, height = 10, units = "in", device = "tiff")
 ```
