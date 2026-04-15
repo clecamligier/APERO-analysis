@@ -153,7 +153,7 @@ points_sf_df <- points_sf %>%
          Latitude = st_coordinates(.)[,2])
 
 # Final map
-Fig2A <- ggplot() +
+Fig7A <- ggplot() +
   geom_sf(data = world, fill = "#cef5ff", color = "black", size = 0.5) +
   geom_sf(data = points_sf, aes(color = Name), size = 5, shape = 16) +
   geom_sf(data = line_sf, color = "grey50", size = 0.5) +
@@ -174,8 +174,8 @@ Fig2A <- ggplot() +
 
 ```{r}
 # Save the figure to the "output" folder
-ggsave(filename = here::here("outputs", "Fig2.tiff"),
-       plot = Fig2A, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
+ggsave(filename = here::here("outputs", "Fig7.tiff"),
+       plot = Fig7A, dpi = 300, width = 10, height = 8, units = "in", device = "tiff")
 ```
 
 
